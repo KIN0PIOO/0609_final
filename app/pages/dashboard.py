@@ -45,6 +45,20 @@ def _wake_supervisor() -> None:
         pass
 
 
+_TARGET_JOB_FILE = _ROOT / "runtime" / "target_job.json"
+
+
+def _write_target_job(data: dict) -> None:
+    """Supervisor의 다음 사이클에서 이 job만 처리하도록 지시합니다."""
+    try:
+        _TARGET_JOB_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _TARGET_JOB_FILE.write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def _ensure_supervisor_running() -> None:
     """Supervisor가 꺼져 있으면 자동으로 시작하고, 실행 중이면 즉시 깨웁니다."""
     if not _agent_status()["running"]:
@@ -204,6 +218,7 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
             if not ok:
                 return json.dumps({"success": False, "map_id": map_id,
                                    "reason": "DB에서 해당 MAP_ID를 찾을 수 없습니다."}, ensure_ascii=False)
+            _write_target_job({"type": "mig", "map_id": map_id})
             _ensure_supervisor_running()
             result = poll_mig_job_result(map_id, timeout_sec=300)
             return json.dumps(result, ensure_ascii=False, default=str)
@@ -215,6 +230,7 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
             if cnt == 0:
                 return json.dumps({"success": False, "sql_id": sql_id,
                                    "reason": "DB에서 해당 SQL_ID를 찾을 수 없습니다."}, ensure_ascii=False)
+            _write_target_job({"type": "sql_conv", "sql_id": sql_id, "space_nm": space_nm})
             _ensure_supervisor_running()
             result = poll_sql_job_result(sql_id, field="STATUS", space_nm=space_nm, timeout_sec=300)
             return json.dumps(result, ensure_ascii=False, default=str)
@@ -226,6 +242,7 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
             if cnt == 0:
                 return json.dumps({"success": False, "sql_id": sql_id,
                                    "reason": "DB에서 해당 SQL_ID를 찾을 수 없습니다."}, ensure_ascii=False)
+            _write_target_job({"type": "sql_tune", "sql_id": sql_id, "space_nm": space_nm})
             _ensure_supervisor_running()
             result = poll_sql_job_result(sql_id, field="TUNED_TEST", space_nm=space_nm, timeout_sec=300)
             return json.dumps(result, ensure_ascii=False, default=str)
