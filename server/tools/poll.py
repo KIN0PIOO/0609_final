@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Callable
 
 from langchain_core.tools import tool
@@ -16,6 +17,21 @@ from server.tools.context import (
 )
 
 JOB_BATCH_SIZE = 20
+
+
+def _agent_flags() -> tuple[bool, bool, bool, bool]:
+    """현재 .env 설정에서 에이전트별 실행 여부를 반환합니다.
+    반환: (run_mig, run_sql, run_tuning, run_formatting)
+    모두 false이면 전체 실행, 하나라도 true이면 선택된 것만 실행합니다."""
+    mig_only  = os.getenv("DB_MIGRATION_ONLY",   "false").lower() == "true"
+    sql_only  = os.getenv("SQL_CONVERSION_ONLY",  "false").lower() == "true"
+    tune_only = os.getenv("SQL_TUNING_ONLY",      "false").lower() == "true"
+    fmt_only  = os.getenv("SQL_FORMATTING_ONLY",  "false").lower() == "true"
+
+    has_selection = mig_only or sql_only or tune_only or fmt_only
+    if not has_selection:
+        return True, True, True, True
+    return mig_only, sql_only, tune_only, fmt_only
 
 
 def build_poll_jobs_tool(
@@ -32,17 +48,22 @@ def build_poll_jobs_tool(
         사이클 시작 시 반드시 먼저 호출해야 합니다.
         반환값: migration_jobs, sql_jobs, tuning_jobs, formatting_jobs 목록과 summary를 담은 JSON 문자열."""
         logger = callbacks.get("logger")
+        run_mig, run_sql, run_tuning, run_fmt = _agent_flags()
 
         mig_jobs, sql_jobs, tuning_jobs, formatting_jobs = [], [], [], []
         try:
-            mig_jobs = get_migration_jobs()
+            if run_mig:
+                mig_jobs = get_migration_jobs()
         except Exception as exc:
             if logger:
                 logger.error(f"[poll_jobs] DataMigration 조회 오류: {exc}")
         try:
-            sql_jobs = get_sql_jobs()
-            tuning_jobs = get_tuning_jobs()
-            formatting_jobs = get_formatting_jobs()
+            if run_sql:
+                sql_jobs = get_sql_jobs()
+            if run_tuning:
+                tuning_jobs = get_tuning_jobs()
+            if run_fmt:
+                formatting_jobs = get_formatting_jobs()
         except Exception as exc:
             if logger:
                 logger.error(f"[poll_jobs] SQL/Tuning/Formatting 조회 오류: {exc}")
@@ -117,16 +138,23 @@ def build_poll_jobs_tool(
 
         if logger:
             s = result["summary"]
+            active = [
+                n for n, flag in [
+                    ("Mig", run_mig), ("Sql", run_sql),
+                    ("Tuning", run_tuning), ("Fmt", run_fmt),
+                ] if flag
+            ]
+            mode_str = "+".join(active) if len(active) < 4 else "전체"
             if s["migration_total"] or s["sql_total"] or s["tuning_total"] or s["formatting_total"]:
                 logger.info(
-                    f"[poll_jobs] "
+                    f"[poll_jobs][{mode_str}] "
                     f"Mig={s['migration_in_batch']}/{s['migration_total']}, "
                     f"Sql={s['sql_in_batch']}/{s['sql_total']}, "
                     f"Tuning={s['tuning_in_batch']}/{s['tuning_total']}, "
                     f"Formatting={s['formatting_in_batch']}/{s['formatting_total']}"
                 )
             else:
-                logger.info("[poll_jobs] 대기 중인 작업 없음")
+                logger.info(f"[poll_jobs][{mode_str}] 대기 중인 작업 없음")
 
         return json.dumps(result, ensure_ascii=False, default=str)
 
