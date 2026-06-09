@@ -19,6 +19,8 @@ from utils.db import (
     reset_sql_conversion_job,
     reset_sql_tuning_job,
     get_sql_failure_log,
+    poll_mig_job_result,
+    poll_sql_job_result,
 )
 from utils.env_manager import read_env
 
@@ -190,39 +192,34 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
         if name == "rerun_migration":
             map_id = int(args["map_id"])
             ok = reset_mig_job_for_rerun(map_id)
-            if ok:
-                _wake_supervisor()
-            return json.dumps({
-                "success": ok,
-                "map_id":  map_id,
-                "action":  "USE_YN='Y', STATUS=NULL, MIG_SQL=NULL, RETRY_COUNT=0 초기화. Supervisor 즉시 알림 완료.",
-            }, ensure_ascii=False)
+            if not ok:
+                return json.dumps({"success": False, "map_id": map_id,
+                                   "reason": "DB에서 해당 MAP_ID를 찾을 수 없습니다."}, ensure_ascii=False)
+            _wake_supervisor()
+            result = poll_mig_job_result(map_id, timeout_sec=300)
+            return json.dumps(result, ensure_ascii=False, default=str)
 
         if name == "rerun_sql_conversion":
             sql_id   = args["sql_id"]
             space_nm = args.get("space_nm")
             cnt = reset_sql_conversion_job(sql_id, space_nm)
-            if cnt > 0:
-                _wake_supervisor()
-            return json.dumps({
-                "success":      cnt > 0,
-                "sql_id":       sql_id,
-                "updated_rows": cnt,
-                "action":       f"NEXT_SQL_INFO.STATUS='URGENT' 설정 ({cnt}건). Supervisor 즉시 알림 완료.",
-            }, ensure_ascii=False)
+            if cnt == 0:
+                return json.dumps({"success": False, "sql_id": sql_id,
+                                   "reason": "DB에서 해당 SQL_ID를 찾을 수 없습니다."}, ensure_ascii=False)
+            _wake_supervisor()
+            result = poll_sql_job_result(sql_id, field="STATUS", space_nm=space_nm, timeout_sec=300)
+            return json.dumps(result, ensure_ascii=False, default=str)
 
         if name == "rerun_sql_tuning":
             sql_id   = args["sql_id"]
             space_nm = args.get("space_nm")
             cnt = reset_sql_tuning_job(sql_id, space_nm)
-            if cnt > 0:
-                _wake_supervisor()
-            return json.dumps({
-                "success":      cnt > 0,
-                "sql_id":       sql_id,
-                "updated_rows": cnt,
-                "action":       f"NEXT_SQL_INFO.TUNED_TEST='URGENT' 설정 ({cnt}건). Supervisor 즉시 알림 완료.",
-            }, ensure_ascii=False)
+            if cnt == 0:
+                return json.dumps({"success": False, "sql_id": sql_id,
+                                   "reason": "DB에서 해당 SQL_ID를 찾을 수 없습니다."}, ensure_ascii=False)
+            _wake_supervisor()
+            result = poll_sql_job_result(sql_id, field="TUNED_TEST", space_nm=space_nm, timeout_sec=300)
+            return json.dumps(result, ensure_ascii=False, default=str)
 
         return json.dumps({"error": f"알 수 없는 도구: {name}"})
 

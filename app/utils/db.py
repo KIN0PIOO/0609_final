@@ -1,4 +1,5 @@
 import os
+import time
 import oracledb
 from pathlib import Path
 from dotenv import load_dotenv
@@ -617,6 +618,80 @@ def get_sql_failure_log(sql_id: str, space_nm: str | None = None) -> list[dict]:
             return _to_dicts(cur)
     except Exception:
         return []
+
+
+# ── 작업 완료 대기 (챗봇 재실행 후 결과 반환용) ──────────────────────────────────
+
+_MIG_RUNNING  = {"", "RUNNING"}
+_SQL_RUNNING  = {"URGENT", "RUNNING", ""}
+
+def poll_mig_job_result(map_id: int, timeout_sec: int = 300, interval: float = 3.0) -> dict:
+    """Migration 작업이 완료될 때까지 대기하고 최종 상태와 로그를 반환합니다."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            jobs = {int(j["MAP_ID"]): j for j in get_mig_jobs()}
+            job = jobs.get(map_id, {})
+            status = str(job.get("STATUS") or "").strip().upper()
+            if status not in _MIG_RUNNING:
+                logs = get_mig_logs(map_id)
+                return {
+                    "completed": True,
+                    "map_id":    map_id,
+                    "status":    status,
+                    "fr_table":  job.get("FR_TABLE"),
+                    "to_table":  job.get("TO_TABLE"),
+                    "elapsed":   job.get("ELAPSED_SECONDS"),
+                    "retry":     job.get("RETRY_COUNT"),
+                    "last_logs": [
+                        {
+                            "step":    lg.get("STEP_NAME"),
+                            "level":   lg.get("LOG_LEVEL"),
+                            "message": str(lg.get("MESSAGE") or "")[:300],
+                        }
+                        for lg in logs[-5:]
+                    ],
+                }
+        except Exception:
+            pass
+        time.sleep(interval)
+    return {"completed": False, "map_id": map_id, "reason": f"{timeout_sec}초 내에 완료되지 않았습니다."}
+
+
+def poll_sql_job_result(
+    sql_id: str,
+    field: str,
+    space_nm: str | None = None,
+    timeout_sec: int = 300,
+    interval: float = 3.0,
+) -> dict:
+    """SQL 변환/튜닝 작업이 완료될 때까지 대기하고 최종 상태와 로그를 반환합니다.
+
+    field: 'STATUS' (변환) 또는 'TUNED_TEST' (튜닝)
+    """
+    deadline = time.time() + timeout_sec
+    field_upper = field.upper()
+    while time.time() < deadline:
+        try:
+            rows = get_sql_failure_log(sql_id, space_nm)
+            if rows:
+                row = rows[0]
+                val = str(row.get(field_upper) or "").strip().upper()
+                if val not in _SQL_RUNNING:
+                    return {
+                        "completed":  True,
+                        "sql_id":     sql_id,
+                        "space_nm":   row.get("SPACE_NM"),
+                        "field":      field_upper,
+                        "result":     val,
+                        "log":        str(row.get("LOG") or "")[:500],
+                        "status":     row.get("STATUS"),
+                        "tuned_test": row.get("TUNED_TEST"),
+                    }
+        except Exception:
+            pass
+        time.sleep(interval)
+    return {"completed": False, "sql_id": sql_id, "reason": f"{timeout_sec}초 내에 완료되지 않았습니다."}
 
 
 def get_sql_job_full(row_id: str) -> dict | None:
