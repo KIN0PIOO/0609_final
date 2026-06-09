@@ -23,6 +23,7 @@ from utils.db import (
     poll_sql_job_result,
 )
 from utils.env_manager import read_env
+from utils.agent_control import get_status as _agent_status, start as _start_supervisor
 
 _ROOT      = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_ROOT / ".env")
@@ -42,6 +43,14 @@ def _wake_supervisor() -> None:
         _WAKE_FILE.touch()
     except Exception:
         pass
+
+
+def _ensure_supervisor_running() -> None:
+    """Supervisor가 꺼져 있으면 자동으로 시작하고, 실행 중이면 즉시 깨웁니다."""
+    if not _agent_status()["running"]:
+        _start_supervisor()
+    else:
+        _wake_supervisor()
 
 
 # ── Supervisor Function-Calling 도구 정의 ─────────────────────────────────────
@@ -195,7 +204,7 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
             if not ok:
                 return json.dumps({"success": False, "map_id": map_id,
                                    "reason": "DB에서 해당 MAP_ID를 찾을 수 없습니다."}, ensure_ascii=False)
-            _wake_supervisor()
+            _ensure_supervisor_running()
             result = poll_mig_job_result(map_id, timeout_sec=300)
             return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -206,7 +215,7 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
             if cnt == 0:
                 return json.dumps({"success": False, "sql_id": sql_id,
                                    "reason": "DB에서 해당 SQL_ID를 찾을 수 없습니다."}, ensure_ascii=False)
-            _wake_supervisor()
+            _ensure_supervisor_running()
             result = poll_sql_job_result(sql_id, field="STATUS", space_nm=space_nm, timeout_sec=300)
             return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -217,7 +226,7 @@ def _handle_supervisor_tool(name: str, args: dict) -> str:
             if cnt == 0:
                 return json.dumps({"success": False, "sql_id": sql_id,
                                    "reason": "DB에서 해당 SQL_ID를 찾을 수 없습니다."}, ensure_ascii=False)
-            _wake_supervisor()
+            _ensure_supervisor_running()
             result = poll_sql_job_result(sql_id, field="TUNED_TEST", space_nm=space_nm, timeout_sec=300)
             return json.dumps(result, ensure_ascii=False, default=str)
 
