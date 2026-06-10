@@ -41,7 +41,7 @@
 
 ## 아키텍처
 
-```mermaid
+```text
 graph TB
   subgraph Client["Client"]
     Web["웹 대시보드 (Streamlit)\n모니터링 / 챗봇 / 설정"]
